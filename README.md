@@ -15,6 +15,7 @@ Python preprocess_imagenet_validation_data.py
 ```
 ## Configuration
 In Configuration.yaml, set mod "Inception" or "ResNet" to choose targeted classifier.
+
 For detail configuration, see `BO-DBA/Demo.ipynb`.
 
 ## Running
