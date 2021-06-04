@@ -7,7 +7,7 @@ from Util import imagesize
 import GPyOpt as gy
 import noise as ns
 import cv2
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 def SAVE(fp,input):
     with open(fp, "wb+") as fp:
@@ -215,7 +215,9 @@ def create_distorted_image(image, typ, epsilon, parameters):
         pert = pert.reshape(1, 3, 224, 224)
         pert = pert.transpose(0, 2, 3, 1)
         pert = (pert - np.min(pert)) / np.ptp(pert)
+
     pert = (pert-.5)*2
+
     dist_img = image + epsilon*pert
     return dist_img
 
@@ -238,7 +240,7 @@ class preddifference:
             self.adv = out
         return dist #np.log(dist*(255/self.maxnorm))
 
-def bayesian_attack(image, max_query, init_query, noise, max_norm,constraint='l2'):
+def bayesian_attack(image, max_query, init_query=5, noise='perlin', max_norm=16,constraint='l2'):
     if noise == 'perlin':
         bounds = [{'name': 'wavelength', 'type': 'continuous', 'domain': (10, 200), 'dimensionality': 1},
                   {'name': 'octave', 'type': 'discrete', 'domain': (1, 2, 3, 4), 'dimensionality': 1},
@@ -366,7 +368,7 @@ def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=
 
     stopping = 0.01
     prev_obj = 100000
-    t = tqdm(total=iterations)
+    t = tqdm(total=max_query)
     for i in range(iterations):
         t.n = imgobj.q
         t.update(n=0)
@@ -662,7 +664,7 @@ def hsja(imgobj,  # instance of class randomimg
     else:
         dist = norm(perturbed, imgobj.img)[1]
 
-    t = tqdm(total=num_iterations)
+    t = tqdm(total=max_query)
     for j in np.arange(num_iterations):
         c_iter = j + 1
         t.n = imgobj.q
@@ -723,15 +725,10 @@ class preddifference_Score:
         #print(self.image.q)
         predictions = get_imagenet_label(rawpredict)
         origprob = rawpredict[0][self.image.labelindex]
-        if self.mode =='Score':
-            return origprob-predictions[1][2]#<=0 means success
-        if self.mode =='Decision':
-            if origprob-predictions[1][2]<=0:
-                return -1
-            else:
-                return 1
+        return origprob-predictions[1][2]#<=0 means success
 
-def bayesian_attack_Score(image, max_query, init_query, noise, max_norm,constraint='l2',mode='Score'):
+
+def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_norm=16,constraint='linf'):
     if noise == 'perlin':
         bounds = [{'name': 'wavelength', 'type': 'continuous', 'domain': (10, 200), 'dimensionality': 1},
                   {'name': 'octave', 'type': 'discrete', 'domain': (1, 2, 3, 4), 'dimensionality': 1},
@@ -753,7 +750,7 @@ def bayesian_attack_Score(image, max_query, init_query, noise, max_norm,constrai
     queries = 0
 
 
-    optimized = preddifference_Score(image, max_norm, noise=noise,constraint=constraint,mode=mode)
+    optimized = preddifference_Score(image, max_norm, noise=noise,constraint=constraint)
 
     # Gaussian process and Bayesian optimization
     objective = gy.core.task.SingleObjective(optimized.func, num_cores=1)

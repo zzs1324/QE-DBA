@@ -17,11 +17,12 @@ class Result:
         #print(temp1)
         count=0
         for item in temp1:
-           if item<=16/255:#item!= float('inf'):
+           if item<=16.01/255:#item!= float('inf'):
                count+=1
         print(count)
+        self.valid= count
         self.rankindex = np.argsort(temp)
-    def Plot(self,test,Number,Xrange,axe=None):
+    def Plot(self,test,Number,Xrange,axe=None,alpha=0.2):
         x = range(Xrange)
         Y=[]
         for item in self.rankindex:
@@ -29,18 +30,24 @@ class Result:
             Y1 = [i[1] for i in self.Data[item][test]]
             Y.append(np.interp(x, X1, Y1))
         Y = Y[0:Number]
-        Y = np.mean(np.array(Y),0)
+        Y_25 = np.percentile(np.array(Y),25,0)
+        Y_75 = np.percentile(np.array(Y),75,0)
+        Y = np.percentile(np.array(Y),50,0)
         print(Y[-1])
         if axe==None:
             plt.plot(x, Y,'-',color=self.color,label=self.label,marker=self.marker,linestyle=self.linestyle)
+            plt.fill_between(x, Y_25, Y_75, color=self.color, alpha=alpha)
         else:
             axe.plot(x, Y,'-',color=self.color,label=self.label,marker=self.marker,linestyle=self.linestyle)
+            axe.fill_between(x, Y_25, Y_75, color=self.color, alpha=alpha)
     def ASR(self,test,Number,Xrange,Thresh,axe=None):
         x = range(Xrange)
         Y=[]
         for item in self.rankindex:
             X1 = [i[0] for i in self.Data[item][test]]
             Y1 = [i[1] for i in self.Data[item][test]]
+            X1 = [X1[0]]+X1
+            Y1 = [Thresh+1]+Y1#Add dummy before the first result
             Y.append(np.interp(x, X1, Y1))
         Y = np.asarray(Y[0:Number])
         temp = Y<Thresh

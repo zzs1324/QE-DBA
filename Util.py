@@ -41,12 +41,15 @@ cls = random.choice(classfiles)
 def get_imagenet_label(probs):
     return decode_predictions(probs, top=6)[0]
 
+
 def display_images(image):
     guessdata = get_imagenet_label(pretrained_model.predict(image, steps=1))
     for guess in guessdata:
         print(guess[1] + ": " + str(guess[2]))
-
-    plt.figure()
+    fig = plt.figure()
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
     plt.imshow(image[0])
     plt.show()
 
@@ -216,3 +219,52 @@ def ResultSave(Name,Path):
     return FileName,ImgPrefix
 
 
+def DemoVisulization(oriImg, Adversary, History, queryBudgets, fontsize=20, SavePath=None):
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 8))
+
+    ax1.imshow(oriImg[0])
+    ax1.set_title('Original Image', size=fontsize)
+    ax1.set_axis_off()
+    guessdata = get_imagenet_label(pretrained_model.predict(oriImg, steps=1))
+    predict = ''
+    for guess in guessdata:
+        predict = predict + guess[1] + ": " + '{:.3f}'.format(guess[2]) + '\n'
+    ax1.text(1, -0.01, predict, ha="right", va='top', size=fontsize * 0.8, transform=ax1.transAxes)
+
+    ax2.imshow(Adversary[0])
+    ax2.set_title('Adversarial Example', size=fontsize)
+    ax2.set_axis_off()
+    guessdata = get_imagenet_label(pretrained_model.predict(Adversary, steps=1))
+    predict = ''
+    for guess in guessdata:
+        predict = predict + guess[1] + ": " + '{:.3f}'.format(guess[2]) + '\n'
+    ax2.text(1, -0.01, predict, ha="right", va='top', size=fontsize * 0.8, transform=ax2.transAxes)
+
+    ax3.imshow(Adversary[0] - oriImg[0])
+    ax3.set_title('Pertubation', size=fontsize)
+    ax3.set_axis_off()
+
+    fig.tight_layout()
+    if SavePath != None:
+        plt.savefig(SavePath, bbox_inches='tight', pad_inches=0)
+
+    x = range(queryBudgets)
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    X1 = [i[0] for i in History[0]]
+    Y1 = [i[1] for i in History[0]]
+    Y1 = np.interp(x, X1, Y1)
+    ax1.plot(x, Y1, '-', color='r', linestyle='-')
+    ax1.set_title('$l_2$ Distance', size=fontsize)
+    # ax1.set_ylabel('$l_2$ Distance',size=fontsize)
+
+    X1 = [i[0] for i in History[1]]
+    Y1 = [i[1] for i in History[1]]
+    Y1 = np.interp(x, X1, Y1)
+    ax2.plot(x, Y1, '-', color='r', linestyle='-')
+    ax2.set_title('$l_\infty$ Distance', size=fontsize)
+
+    X1 = [i[0] for i in History[2]]
+    Y1 = [i[1] / 1000 for i in History[2]]
+    Y1 = np.interp(x, X1, Y1)
+    ax3.plot(x, Y1, '-', color='r', linestyle='-')
+    ax3.set_title('Time(s)', size=fontsize)
