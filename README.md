@@ -1,5 +1,5 @@
 # BO-DBA
-BO-DBA: Efficient Decision-Based Adversarial Attacks via Bayesian Optimization
+BO-DBA: Query-Efficient Decision-Based Adversarial Attacks via Bayesian Optimization
 ## Setup
 
 Install the required libraries:
@@ -13,3 +13,10 @@ Data Preparation
 cd DataSet
 Python preprocess_imagenet_validation_data.py
 ```
+## Configuration
+In Configuration.yaml, set mod "Inception" or "ResNet" to choose targeted classifier.
+For detail configuration, see `BO-DBA/Demo.ipynb`.
+
+## Running
+We provide as an `BO-DBA/Demo.ipynb` to run BO-DBA attack and other attacks we compared with in our paper.
+We also provide source code of evaluation experiments in `BO-DBA/Evaluation/`, copy the codes to main folder before running it.
