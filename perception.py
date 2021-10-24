@@ -25,11 +25,8 @@ def load_images_from_folder(folder):
 
 """
 folder = "../Result/AdversaryExample/"
-
 im1name= "Original_24.npy"
 im2name = "Ver3_24.npy"
-
-
 im1 = np.load(os.path.join(folder,im1name))
 im2 = np.load(os.path.join(folder,im2name))
 """
@@ -131,11 +128,9 @@ Argument 2: Bool, Ignore images where procedural noise failed
 """
 types = ["Procedural","Ver3", "Ver4", "Ver4_12_HUE"]
 averages(types)
-
 histo(types, "lpips")
 histo(types, "ssim")
 histo(types, "psnr")
 histo(types, "msssim")
 histo(types, "entropy")
 """
-
