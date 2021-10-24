@@ -4,10 +4,15 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-
+from shared import norm
 import os
 from scipy import ndimage
 import yaml
+import time
+import keras
+
+def millis():
+    return int(round(time.time() * 1000))
 
 #Load data and model
 with open(f'./Configuration.yaml', 'r') as f:
@@ -35,11 +40,42 @@ elif mod == "Inception":
     pretrained_model.trainable = False
     decode_predictions = tf.keras.applications.inception_v3.decode_predictions
     imagesize = 299
+elif mod =="MNIST":
+    pretrained_model = keras.models.load_model('./Models/Mnist')
+    imagesize=28
+    num_classes=10
+    (_, _), (x_test, y_test) = keras.datasets.mnist.load_data()
+    x_test = x_test.astype("float32") / 255
+    x_test = np.expand_dims(x_test, -1)
+    y_test = keras.utils.to_categorical(y_test, num_classes)
+
 cls = random.choice(classfiles)
 
+def norm(image, image2):
+    if isinstance(image, np.ndarray):
+        y = image
+    else:
+        y = image.numpy()[0]
+    if isinstance(image2, np.ndarray):
+        z = image2
+    else:
+        z = image2.numpy()[0]
+    l2norm = tf.norm(np.subtract(z, y), ord=2).numpy()
+    infnorm = tf.norm(np.subtract(z, y), ord=np.inf).numpy()
+    return l2norm, infnorm
 
 def get_imagenet_label(probs):
-    return decode_predictions(probs, top=6)[0]
+    if mod=="MNIST":
+        res = []
+        probs=probs[0]
+        idxlist = np.argsort(-probs)
+        #print(probs)
+        #print(idxlist)
+        for i in range(6):
+            res.append((idxlist[i],str(idxlist[i]),probs[idxlist[i]]))
+        return res
+    else:
+        return decode_predictions(probs, top=6)[0]
 
 
 def display_images(image):
@@ -73,31 +109,54 @@ def importimage(imgpath):
 class randomimg:
 
     def __init__(self, m="joint", t=-1,mode='Raw'):
-        cls = random.choice(classfiles)
-        imgfile = random.choice(images[cls])
-        imgpath = os.path.join(data_path, cls + "/" + imgfile)
-
-        rawimage, image = importimage(imgpath)
-
+        # recorder distance
+        self.maxl2 = float('inf')
+        self.maxlinf = float('inf')
+        self.historyl2 = []
+        self.historylinf = []
         self.q = 0
-
-        self.imgplot = rawimage
         self.method = m
         self.threshold = t
-        self.mode=mode
+        self.mode = mode
 
-        # print(np.shape(image))
-        self.img = image
-        self.image_probs = get_imagenet_label(pretrained_model.predict(image, steps=1))
-        self.labelindex = np.argmax(pretrained_model.predict(image, steps=1))
-        origpredictions = self.image_probs[0]
+        if mod =="MNIST":
+            index = random.choice(range(len(x_test)))
+            image = np.expand_dims(x_test[index],0)
+            rawimage = x_test[index]
+            self.img = tf.convert_to_tensor(image, dtype=tf.float32)
+            self.image_probs = get_imagenet_label(pretrained_model.predict(image, steps=1))
+            self.labelindex = np.argmax(pretrained_model.predict(image, steps=1))
+            origpredictions = self.image_probs[0]
+            #print(origpredictions)
+            actualprediction = np.argmax(y_test)
+            #print(actualprediction)
 
-        actualprediction = os.path.basename(os.path.dirname(imgpath))
+        else:
+            cls = random.choice(classfiles)
+            imgfile = random.choice(images[cls])
+            imgpath = os.path.join(data_path, cls + "/" + imgfile)
+
+            rawimage, image = importimage(imgpath)
+            # print(np.shape(image))
+            self.img = image
+            self.image_probs = get_imagenet_label(pretrained_model.predict(image, steps=1))
+            self.labelindex = np.argmax(pretrained_model.predict(image, steps=1))
+            origpredictions = self.image_probs[0]
+            actualprediction = os.path.basename(os.path.dirname(imgpath))
+
 
         if origpredictions[0] != actualprediction:
             self = randomimg()
 
 
+    def update(self,img):
+        twonorm,infnorm = norm(self.img, img)
+        if twonorm<self.maxl2:
+            self.maxl2 = twonorm
+            self.historyl2.append([self.q,twonorm])
+        if infnorm<self.maxlinf:
+            self.maxlinf = infnorm
+            self.historylinf.append([self.q,infnorm])
 
     def decision(self, img):
         check = get_imagenet_label(pretrained_model.predict(img, steps=1))
@@ -106,17 +165,16 @@ class randomimg:
             result = False
         else:
             result = True
-        if self.mode=='Raw':
-            return result
-        else:
+        if self.mode!='Raw':#run detection
             if self.threshold == -1:
                 detection = adversarial_detection(img, self.method)[0]  # True means detected
             else:
                 detection = adversarial_detection(img, self.method, self.threshold)[0]
             if detection==True:
-                return False  # attack fail(label did not change or been detected)
-            else:
-                return result
+                result = False  # attack fail(label did not change or been detected)
+        if result==True:
+            self.update(img)
+        return result
 
 #DefenseMethod
 l1_dist = lambda x1, x2: np.sum(np.abs(x1 - x2), axis=tuple(range(len(x1.shape))[1:]))
@@ -239,8 +297,8 @@ def DemoVisulization(oriImg, Adversary, History, queryBudgets, fontsize=20, Save
     for guess in guessdata:
         predict = predict + guess[1] + ": " + '{:.3f}'.format(guess[2]) + '\n'
     ax2.text(1, -0.01, predict, ha="right", va='top', size=fontsize * 0.8, transform=ax2.transAxes)
-
-    ax3.imshow(Adversary[0] - oriImg[0])
+    perturbation = (Adversary[0] - oriImg[0])*255
+    ax3.imshow(perturbation.numpy().astype('int'))
     ax3.set_title('Pertubation', size=fontsize)
     ax3.set_axis_off()
 
