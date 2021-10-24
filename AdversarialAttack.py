@@ -1,38 +1,32 @@
 import pickle
-import time
 import numpy as np
 import colorsys
 import tensorflow as tf
-from Util import imagesize
+from Util import imagesize, norm
 import GPyOpt as gy
 import noise as ns
 import cv2
 from tqdm.notebook import tqdm
+from Util import millis, mod
 
-def SAVE(fp,input):
+
+def SAVE(fp, input):
     with open(fp, "wb+") as fp:
         pickle.dump(input, fp)
     return
+
+
 def LOAD(fp):
     with open(fp, "rb+") as fp:
         output = pickle.load(fp)
     return output
-def millis():
-    return int(round(time.time() * 1000))
 
 
-def norm(image, image2):
-    if isinstance(image, np.ndarray):
-        y = image
-    else:
-        y = image.numpy()[0]
-    if isinstance(image2, np.ndarray):
-        z = image2
-    else:
-        z = image2.numpy()[0]
-    l2norm = tf.norm(np.subtract(z, y), ord=2).numpy()
-    infnorm = tf.norm(np.subtract(z, y), ord=np.inf).numpy()
-    return l2norm, infnorm
+def rgb2gray(rgb):
+    gray = np.mean(rgb, -1)
+
+    return gray
+
 
 def binary_search(perturbed_image, imgobj, theta, l='l2'):
     low = 0
@@ -43,29 +37,28 @@ def binary_search(perturbed_image, imgobj, theta, l='l2'):
         perturbed_image = np.clip(perturbed_image, 0, 1)
         if np.array_equal(perturbed_image1, perturbed_image):
             print('inf happened')
-            return perturbed_image, float('inf')
+            if l == 'l2':
+                return perturbed_image, imagesize * imagesize
+            else:
+                return perturbed_image, 1.0
         #        display_images(perturbed_image)
         low = 0.5
-    #        print(imgobj.q,end=",")
+    high = 1
 
-    if l == 'l2':
-        distance = norm(perturbed_image, imgobj.img)[0]
-        high = 1
-    else:
-        distance = norm(perturbed_image, imgobj.img)[1]
-        high = distance
 
+    # print(str(high)+','+str(low))
     while (high - low) / theta > 1:
         #        print(imgobj.q,end=";")
         mid = (high + low) / 2.0
-        mid_image = project(imgobj.img, perturbed_image, mid, l)
+        mid_image = project(imgobj.img, perturbed_image, mid, 'l2')
         d = imgobj.decision(mid_image)
         if d == 1:
             high = mid
         else:
             low = mid
+        # print(str(high)+','+str(low))
 
-    output = project(imgobj.img, perturbed_image, high, l)
+    output = project(imgobj.img, perturbed_image, high, 'l2')
 
     if l == 'l2':
         finaldist = norm(output, imgobj.img)[0]
@@ -90,23 +83,16 @@ def select_delta(dist, l, cur_iter, theta, d):
             delta = np.sqrt(d) * theta * dist
     return delta
 
+
 def clip_image(image, clip_min, clip_max):
     # Clip an image, or an image batch, with upper and lower threshold.
     return np.minimum(np.maximum(clip_min, image), clip_max)
 
 
-def project(original_image, perturbed_image, alphas, l):
-    # alphas_shape = len(original_image.shape)
-    # alphas = alphas.reshape(alphas_shape)
-    if l == 'l2':
-        return (1 - alphas) * original_image + alphas * perturbed_image
-    elif l == 'linf':
-        out_images = clip_image(
-            perturbed_image,
-            original_image - alphas,
-            original_image + alphas
-        )
-        return out_images
+def project(original_image, perturbed_images, alphas, l='l2'):
+
+    return (1 - alphas) * original_image + alphas * perturbed_images
+
 
 def perlin_noise(noise_scale, noise_octaves, color_freq, noise_p=1, noise_l=2):
     blank = np.zeros((imagesize, imagesize, 3))
@@ -123,7 +109,9 @@ def perlin_noise(noise_scale, noise_octaves, color_freq, noise_p=1, noise_l=2):
                                                  base=0
                                                  )
     blank = np.sin(blank * color_freq * np.pi)
-
+    if mod == 'MNIST':
+        blank = np.expand_dims(rgb2gray(blank), -1)
+        # print(blank.shape)
     return normalize(blank)
 
 
@@ -179,16 +167,18 @@ def gabor_noise_random(num_kern, ksize, sigma, theta, lambd, xy_ratio=1, sides=1
     normn = normalize(sp_conv)
     normn = np.around(normn)
     normn = np.expand_dims(normn, 0)
-    normn = np.expand_dims(normn, 3)
-    normn = tf.image.grayscale_to_rgb(tf.convert_to_tensor(normn))
+    if mod == 'MNIST':
+        return np.expand_dims(normn, -1)
+    else:
+        normn = np.expand_dims(normn, 3)
+        normn = tf.image.grayscale_to_rgb(tf.convert_to_tensor(normn))
 
     return normn.numpy()
 
 
-
-
 rgb_to_hsv = np.vectorize(colorsys.rgb_to_hsv)
 hsv_to_rgb = np.vectorize(colorsys.hsv_to_rgb)
+
 
 def shift_hue(arr, hout):
     r, g, b = np.rollaxis(arr, axis=-1)
@@ -198,49 +188,60 @@ def shift_hue(arr, hout):
     arr = np.dstack((r, g, b))
     return arr
 
+
 def colorize(image, hue):
     new_img = shift_hue(image, hue)
 
     return new_img
+
+
 from Upsample import upsample_projection
+
+
 def create_distorted_image(image, typ, epsilon, parameters):
     parameters = parameters[0]
     if typ == 'perlin':
         pert = perlin_noise(parameters[0], parameters[1], parameters[2])
     elif typ == 'gabor':
-        pert = gabor_noise_random(int(parameters[0]), int(parameters[1]), parameters[2], parameters[3], parameters[4], sides = int(parameters[5]))
-    elif typ =='BICU' or typ == 'CLUSTER' or typ =='NN' or typ =='BILI':
+        pert = gabor_noise_random(int(parameters[0]), int(parameters[1]), parameters[2], parameters[3], parameters[4],
+                                  sides=int(parameters[5]))
+    elif typ == 'BICU' or typ == 'CLUSTER' or typ == 'NN' or typ == 'BILI':
         parameters = np.expand_dims(parameters, axis=0)
         pert = upsample_projection(typ, parameters, 16, 224 * 224, nchannel=3)
         pert = pert.reshape(1, 3, 224, 224)
         pert = pert.transpose(0, 2, 3, 1)
         pert = (pert - np.min(pert)) / np.ptp(pert)
 
-    pert = (pert-.5)*2
+    pert = (pert - .5) * 2
 
-    dist_img = image + epsilon*pert
+    dist_img = image + epsilon * pert
     return dist_img
+
 
 class preddifference:
     def __init__(self, image, maxnorm, noise, constraint='l2'):
         self.image = image
         self.maxnorm = maxnorm
         self.noise = noise
-        self.best = float('inf')
+        self.best = imagesize * imagesize
         self.theta = 0.01
-        self.constraint=constraint
+        self.adv = None
+        self.constraint = constraint
         pass
 
     def func(self, parameters):
+        # print(parameters)
         final = create_distorted_image(self.image.img, self.noise, self.maxnorm / 255, parameters)
-
+        # print(final.shape)
         out, dist = binary_search(final, self.image, self.theta, l=self.constraint)
+        # print(out.shape)
         if dist < self.best:
             self.best = dist
             self.adv = out
-        return dist #np.log(dist*(255/self.maxnorm))
+        return dist  # np.log(dist*(255/self.maxnorm))
 
-def bayesian_attack(image, max_query, init_query=5, noise='perlin', max_norm=16,constraint='l2'):
+
+def bayesian_attack(image, max_query, init_query=5, noise='perlin', max_norm=16, constraint='l2'):
     if noise == 'perlin':
         bounds = [{'name': 'wavelength', 'type': 'continuous', 'domain': (10, 200), 'dimensionality': 1},
                   {'name': 'octave', 'type': 'discrete', 'domain': (1, 2, 3, 4), 'dimensionality': 1},
@@ -262,61 +263,46 @@ def bayesian_attack(image, max_query, init_query=5, noise='perlin', max_norm=16,
 
     queries = 0
 
-
-    optimized = preddifference(image, max_norm, noise=noise,constraint=constraint)
+    optimized = preddifference(image, max_norm, noise=noise, constraint=constraint)
 
     # Gaussian process and Bayesian optimization
     objective = gy.core.task.SingleObjective(optimized.func, num_cores=1)
     model = gy.models.GPModel(exact_feval=False, optimize_restarts=5, verbose=False)
     aquisition_opt = gy.optimization.AcquisitionOptimizer(feasible_space)
-    acquisition = gy.acquisitions.AcquisitionLCB(model, feasible_space, optimizer=aquisition_opt)
+    acquisition = gy.acquisitions.AcquisitionEI(model, feasible_space, optimizer=aquisition_opt)
     evaluator = gy.core.evaluators.Sequential(acquisition, batch_size=1)
     BOpt = gy.methods.ModularBayesianOptimization(model, feasible_space, objective, acquisition, evaluator,
                                                   initial_design)
-    HistoryL2 = []
-    HistoryLinf = []
-    bestDistanceL2 = 2550
-    bestDistanceLinf = 2550
-    best_f = float('inf')
+
     TimeHistory = [[0, 0]]
     t1 = millis()
-    success = False
     last = 0
     t = tqdm(total=max_query)
+    quitcount = 0
     while image.q < max_query:
         BOpt.run_optimization(max_iter=1)
-        t.n=image.q
+        t.n = image.q
         t.update(n=0)
         if image.q == last:
-            break
+            quitcount = quitcount + 1
+            if quitcount < 5:
+                print('===============')
+                continue
+            else:
+                break
         else:
             last = image.q
         t2 = millis()
         TimeHistory.append([image.q, t2 - t1])
-        if BOpt.fx_opt < best_f:
-            best_f = BOpt.fx_opt
-            twonorm, infnorm = norm(image.img, optimized.adv)
-            if infnorm < bestDistanceLinf:
-                bestDistanceLinf = infnorm
-                HistoryLinf.append([image.q, bestDistanceLinf])
-                if constraint=='linf':
-                    success=True
-                    final = optimized.adv
-            if twonorm < bestDistanceL2:
-                bestDistanceL2 = twonorm
-                HistoryL2.append([image.q, bestDistanceL2])
-                if constraint=='l2':
-                    success=True
-                    final = optimized.adv
-    HistoryL2.append([image.q, bestDistanceL2])
-    HistoryLinf.append([image.q, bestDistanceLinf])
-    twonorm, infnorm = norm(image.img, final)
-    return success,final, [HistoryL2, HistoryLinf, TimeHistory],[twonorm,infnorm]
+    return TimeHistory, optimized.adv
 
-#QueryAttack
+
+# QueryAttack
 import random
 import os
-from Util import classfiles,images,data_path,importimage
+from Util import classfiles, images, data_path, importimage
+
+
 def get_Random_Img():
     cls = random.choice(classfiles)
     imgfile = random.choice(images[cls])
@@ -326,24 +312,24 @@ def get_Random_Img():
 
 
 def get_Random_Noise():
-    noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 3])
+    if mod == 'MNIST':
+        noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 1])
+    else:
+        noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 3])
 
     return noise
 
 
 def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=5000):
     x0 = imgobj.img
-    disttbl = []
-    HistoryL2 = []
-    HistoryLinf = []
     TimeHistory = [[0, 0]]
     t1 = millis()
 
     num_samples = 100
-    best_theta, g_theta = None, float('inf')
+    best_theta, g_theta = None, imagesize * imagesize
 
-    #print("Searching for the initial direction on %d samples: " % (num_samples))
-    timestart = time.time()
+    # print("Searching for the initial direction on %d samples: " % (num_samples))
+
     for i in range(num_samples):
         xi = get_Random_Noise()
         if imgobj.decision(xi):
@@ -353,16 +339,12 @@ def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=
             lbd = fine_grained_binary_search(imgobj, theta, initial_lbd, g_theta)
             if lbd < g_theta:
                 best_theta, g_theta = theta, lbd
-                #print("--------> Found distortion %.4f" % g_theta)
+                # print("--------> Found distortion %.4f" % g_theta)
                 t2 = millis()
                 perturbed = x0 + g_theta * best_theta
                 TimeHistory.append([imgobj.q, t2 - t1])
-                twonorm, infnorm = norm(perturbed, imgobj.img)
-                HistoryL2.append([imgobj.q, twonorm])
-                HistoryLinf.append([imgobj.q, infnorm])
-    #print("==========> Found best distortion %.4f using %d queries" % (twonorm, imgobj.q))
+    # print("==========> Found best distortion %.4f using %d queries" % (twonorm, imgobj.q))
 
-    timestart = time.time()
     g1 = 1.0
     theta, g2 = np.copy(best_theta), g_theta
 
@@ -372,10 +354,10 @@ def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=
     for i in range(iterations):
         t.n = imgobj.q
         t.update(n=0)
-        #print('round:' + str(i))
+        # print('round:' + str(i))
         gradient = np.zeros(theta.shape)
         q = 10
-        min_g1 = float('inf')
+        min_g1 = imagesize * imagesize
         for _ in range(q):
             u = np.random.randn(*theta.shape).astype('float')
             u = u / np.linalg.norm(u)
@@ -428,14 +410,11 @@ def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=
         t2 = millis()
         perturbed = x0 + g_theta * best_theta
         TimeHistory.append([imgobj.q, t2 - t1])
-        twonorm, infnorm = norm(perturbed, imgobj.img)
-        HistoryL2.append([imgobj.q, twonorm])
-        HistoryLinf.append([imgobj.q, infnorm])
-        #print("==========> Found best distortion %.4f using %d queries" % (twonorm, imgobj.q))
+        # print("==========> Found best distortion %.4f using %d queries" % (twonorm, imgobj.q))
         # print(alpha)
         if alpha < 1e-4:
             alpha = 1.0
-            #print("Warning: not moving, g2 %lf gtheta %lf" % (g2, g_theta))
+            # print("Warning: not moving, g2 %lf gtheta %lf" % (g2, g_theta))
             beta = beta * 0.1
             if (beta < 0.0005):
                 break
@@ -444,7 +423,7 @@ def attack_untargeted(imgobj, alpha=0.2, beta=0.001, iterations=1000, max_query=
             break
     returning = x0 + g_theta * best_theta
     twonorm, infnorm = norm(imgobj.img, returning)
-    return True,returning, [HistoryL2, HistoryLinf, TimeHistory],[twonorm,infnorm]
+    return TimeHistory, returning
 
 
 def fine_grained_binary_search_local(imgobj, theta, initial_lbd=1.0, tol=1e-5):
@@ -456,7 +435,7 @@ def fine_grained_binary_search_local(imgobj, theta, initial_lbd=1.0, tol=1e-5):
         while not imgobj.decision(x0 + lbd_hi * theta):
             lbd_hi = lbd_hi * 1.01
             if lbd_hi > 20:
-                return float('inf')
+                return imagesize * imagesize
     else:
         lbd_hi = lbd
         lbd_lo = lbd * 0.99
@@ -476,7 +455,7 @@ def fine_grained_binary_search(imgobj, theta, initial_lbd, current_best):
     x0 = imgobj.img
     if initial_lbd > current_best:
         if not imgobj.decision(x0 + current_best * theta):
-            return float('inf')
+            return imagesize * imagesize
         lbd = current_best
     else:
         lbd = initial_lbd
@@ -491,13 +470,20 @@ def fine_grained_binary_search(imgobj, theta, initial_lbd, current_best):
         else:
             lbd_lo = lbd_mid
     return lbd_hi
+
+
 ###HopSkipJumpAttak
-from Util import get_imagenet_label,pretrained_model
+from Util import get_imagenet_label, pretrained_model
+
+
 def random_noise_hsja(imgobj):
     tries = 0
     while tries < 1000:
         tries += 1
-        noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 3])
+        if mod == "MNIST":
+            noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 1])
+        else:
+            noise = np.random.uniform(0, 1, [1, imagesize, imagesize, 3])
         if imgobj.decision(noise):
             break
 
@@ -527,15 +513,12 @@ def select_delta(dist, l, cur_iter, theta, d):
     return delta
 
 
-def geometric_progression(x, update, dist, cur_iter,imgobj):
+def geometric_progression(x, update, dist, cur_iter, imgobj):
     epsilon = dist / np.sqrt(cur_iter)
 
     def phi(epsilon):
         new = x + epsilon * update
-        check1 = get_imagenet_label(pretrained_model.predict(new, steps=1))
-        check2 = get_imagenet_label(pretrained_model.predict(x, steps=1))
-        imgobj.q+=1#record the query
-        success = [check1[0][0] != check2[0][0]]
+        success = imgobj.decision(new)
         return success
 
     while not phi(epsilon):
@@ -561,10 +544,7 @@ def approximate_gradient(sample, num_evals, delta, l, imgobj):
 
     decisions = np.array([])
     for i in range(num_evals):
-        check1 = get_imagenet_label(pretrained_model.predict(perturbed[i], steps=1))
-        check2 = get_imagenet_label(pretrained_model.predict(sample, steps=1))
-        imgobj.q += 1#record the query
-        boolean = [check1[0][0] != check2[0][0]]
+        boolean = imgobj.decision(perturbed[i])
         decisions = np.append(decisions, boolean)
 
     decision_shape = [len(decisions)] + [1] * len(sample.shape)
@@ -642,10 +622,8 @@ def hsja(imgobj,  # instance of class randomimg
          init_num_evals=100,
          verbose=True
          ):
-    HistoryL2 = []
-    HistoryLinf = []
     TimeHistory = [[0, 0]]
-    best_f = float('inf')
+    best_f = imagesize * imagesize
     t1 = millis()
     d = np.prod(imgobj.img.shape)
 
@@ -685,7 +663,7 @@ def hsja(imgobj,  # instance of class randomimg
             update = gradf
         # find step size.
         epsilon = geometric_progression(perturbed,
-                                        update, dist, c_iter,imgobj)
+                                        update, dist, c_iter, imgobj)
         # Update the sample.
         perturbed = clip_image(perturbed + epsilon * update, 0, 1)
         # Binary search to return to the boundary.
@@ -699,36 +677,37 @@ def hsja(imgobj,  # instance of class randomimg
             print('queries: {:d}, iterations {:d}, {:s} distance {:.4E}'.format(imgobj.q, c_iter, constraint, dist))
         t2 = millis()
         TimeHistory.append([imgobj.q, t2 - t1])
-        if dist<best_f:
-            best_f=dist
-            twonorm, infnorm = norm(perturbed, imgobj.img)
-            HistoryL2.append([imgobj.q, twonorm])
-            HistoryLinf.append([imgobj.q, infnorm])
         if imgobj.q > max_query:
             break
-    return True, perturbed, [HistoryL2, HistoryLinf, TimeHistory],[twonorm,infnorm]
+    return TimeHistory, perturbed
 
-#Score-Based BO-attack
+
+# Score-Based BO-attack
 class preddifference_Score:
-    def __init__(self, image, maxnorm,noise, constraint='l2',mode='Score'):
+    def __init__(self, image, maxnorm, noise, constraint='l2', mode='Score'):
         self.image = image
         self.maxnorm = maxnorm
-        self.noise=noise
-        self.constraint=constraint
-        self.mode=mode
+        self.noise = noise
+        self.constraint = constraint
+        self.mode = mode
+        self.adv = None
         pass
+
     def func(self, parameters):
-        final = create_distorted_image(self.image.img, self.noise, self.maxnorm/255, parameters)
+        final = create_distorted_image(self.image.img, self.noise, self.maxnorm / 255, parameters)
         self.adv = final
         rawpredict = pretrained_model.predict(final)
         self.image.q += 1
-        #print(self.image.q)
+        # print(self.image.q)
         predictions = get_imagenet_label(rawpredict)
         origprob = rawpredict[0][self.image.labelindex]
-        return origprob-predictions[1][2]#<=0 means success
+        result = origprob - predictions[1][2]  # <=0 means success
+        if result <= 0:
+            self.image.update(final)
+        return result
 
 
-def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_norm=16,constraint='linf'):
+def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_norm=16, constraint='linf'):
     if noise == 'perlin':
         bounds = [{'name': 'wavelength', 'type': 'continuous', 'domain': (10, 200), 'dimensionality': 1},
                   {'name': 'octave', 'type': 'discrete', 'domain': (1, 2, 3, 4), 'dimensionality': 1},
@@ -749,8 +728,7 @@ def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_no
 
     queries = 0
 
-
-    optimized = preddifference_Score(image, max_norm, noise=noise,constraint=constraint)
+    optimized = preddifference_Score(image, max_norm, noise=noise, constraint=constraint)
 
     # Gaussian process and Bayesian optimization
     objective = gy.core.task.SingleObjective(optimized.func, num_cores=1)
@@ -760,19 +738,15 @@ def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_no
     evaluator = gy.core.evaluators.Sequential(acquisition, batch_size=1)
     BOpt = gy.methods.ModularBayesianOptimization(model, feasible_space, objective, acquisition, evaluator,
                                                   initial_design)
-    HistoryL2 = []
-    HistoryLinf = []
-    bestDistanceL2 = 2550
-    bestDistanceLinf = 2550
-    best_f = float('inf')
+
     TimeHistory = [[0, 0]]
     t1 = millis()
     success = False
     last = 0
     t = tqdm(total=max_query)
     while image.q < max_query:
-        BOpt.run_optimization(max_iter=1)
-        t.n=image.q
+        BOpt.run_optimization(max_iter=1, eps=0)
+        t.n = image.q
         t.update(n=0)
         if image.q == last:
             break
@@ -780,27 +754,4 @@ def bayesian_attack_Score(image, max_query, init_query=5, noise='perlin', max_no
             last = image.q
         t2 = millis()
         TimeHistory.append([image.q, t2 - t1])
-        if BOpt.fx_opt <= 0:
-            twonorm, infnorm = norm(image.img, optimized.adv)
-            if infnorm < bestDistanceLinf:
-                bestDistanceLinf = infnorm
-                HistoryLinf.append([image.q, bestDistanceLinf])
-                if constraint=='linf':
-                    success=True
-                    final = optimized.adv
-            if twonorm < bestDistanceL2:
-                bestDistanceL2 = twonorm
-                HistoryL2.append([image.q, bestDistanceL2])
-                if constraint=='l2':
-                    success=True
-                    final = optimized.adv
-    t.close()
-    HistoryL2.append([image.q, bestDistanceL2])
-    HistoryLinf.append([image.q, bestDistanceLinf])
-    if success:
-        twonorm, infnorm = norm(image.img, final)
-    else:
-        final=None
-        twonorm=bestDistanceL2
-        infnorm=bestDistanceLinf
-    return success,final, [HistoryL2, HistoryLinf, TimeHistory],[twonorm,infnorm]
+    return TimeHistory, optimized.adv
