@@ -36,7 +36,7 @@ In Configuration.yaml, set mod "Inception" or "ResNet" to choose targeted classi
 For detail configuration, see `BO-DBA/Demo.ipynb`.
 
 ## 💻Running
-To see the correct implementation of the project, first have a look at ➡️  `BO-DBA/Demo.ipynb`. The jupyter notebook implements the BO-DBA attack and makes it easier to understand. The .ipynb file also provides the comparision of different types of adversarial attacks. Thus, explaining how our approach of applying Bayesian Optimization is better than the others. 
+To see the correct implementation of the project, first have a look at ➡️  `BO-DBA/Demo.ipynb`. This jupyter notebook implements the BO-DBA attack and makes it easier to understand. The .ipynb file also provides the comparision of different types of adversarial attacks. Thus, explaining how our approach of applying Bayesian Optimization is better than the others. 
 
 If you wish to see the source code of all the evaluation experiments then please have a look at this -> `BO-DBA/Evaluation/`. Just remember to copy the codes to the main folder before running it!
 ## 💡Authors
