@@ -1,3 +1,0 @@
-main_path: ./
-data_path: ./DataSet/ILSVRC2012_img_val
-mod: Inception
